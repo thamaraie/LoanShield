@@ -31,26 +31,6 @@ tests/
 └── test_suggestions.py
 ```
 
-## Running the Suggestion Agent
-
-Generate suggestions:
-
-```bash
-python scripts/run_suggestions.py
-```
-
-Evaluate the Rule 3 golden set:
-
-```bash
-python scripts/evaluate_golden_set.py
-```
-
-Run tests:
-
-```bash
-pytest tests
-```
-
 ## Stage 4 Deliverables
 
 - Suggestion generation for failed compliance rules.
@@ -59,9 +39,3 @@ pytest tests
 - Suggestion caching mechanism.
 - Golden set evaluation for retrieval accuracy.
 - Automated test suite.
-
-## Commit
-
-```
-Stage 4: Implement Suggestion Agent
-```
