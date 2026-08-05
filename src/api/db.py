@@ -1,6 +1,8 @@
 """DuckDB connection and the review_actions table this stage owns."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import duckdb
 
 DB_PATH = "data/loanguard.duckdb"
@@ -22,6 +24,7 @@ CREATE SEQUENCE IF NOT EXISTS review_actions_id_seq START 1;
 
 
 def get_connection(db_path: str = DB_PATH) -> duckdb.DuckDBPyConnection:
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     conn = duckdb.connect(db_path)
     conn.execute(_CREATE_REVIEW_ACTIONS_SEQ)
     conn.execute(_CREATE_REVIEW_ACTIONS)

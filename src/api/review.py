@@ -25,6 +25,81 @@ class NotFoundError(Exception):
     pass
 
 
+def _fetch_records(result: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
+    columns = [column[0] for column in result.description]
+    return [dict(zip(columns, row)) for row in result.fetchall()]
+
+
+def get_report(conn: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+    """Return aggregate verdict and review data without loading loan rows."""
+    totals = conn.execute(
+        """
+        SELECT
+            count(*) AS total_checked,
+            count(*) FILTER (WHERE NOT rule1_pass) AS rule1_failures,
+            count(*) FILTER (WHERE NOT rule2_pass) AS rule2_failures,
+            count(*) FILTER (WHERE NOT rule3_pass) AS rule3_failures,
+            count(*) FILTER (WHERE NOT (rule1_pass AND rule2_pass AND rule3_pass)) AS failed_any,
+            max(fx_fetched_at) AS fx_fetched_at,
+            bool_or(degraded) AS fx_degraded,
+            max(policy_version) AS policy_version
+        FROM verdicts
+        """
+    ).fetchone()
+    status_rows = conn.execute(
+        """
+        WITH latest AS (
+            SELECT action, payload,
+                   row_number() OVER (PARTITION BY loan_id ORDER BY created_at DESC, id DESC) AS rn
+            FROM review_actions
+        )
+        SELECT
+            count(*) FILTER (WHERE rn = 1 AND action = 'manual_fix') AS manual_fix,
+            count(*) FILTER (WHERE rn = 1 AND action = 'accept_ai') AS accept_ai,
+            count(*) FILTER (WHERE rn = 1 AND action = 'ignore') AS ignore,
+            count(*) FILTER (WHERE rn = 1 AND action IN ('manual_fix', 'accept_ai') AND (
+                json_extract_string(payload, '$.revalidation.rule1_pass') = 'false'
+                OR json_extract_string(payload, '$.revalidation.rule2_pass') = 'false'
+                OR json_extract_string(payload, '$.revalidation.rule3_pass') = 'false'
+            )) AS still_failing
+        FROM latest
+        WHERE rn = 1
+        """
+    ).fetchone()
+    companies = _fetch_records(conn.execute(
+        """
+        SELECT company_name, sum(loan_value_eur) AS loan_value_eur
+        FROM enriched_loans
+        GROUP BY company_name
+        ORDER BY company_name
+        """
+    ))
+
+    total_checked = totals[0] or 0
+    reviewed = sum(value or 0 for value in status_rows[:3])
+    return {
+        "total_checked": total_checked,
+        "rule1_failures": totals[1] or 0,
+        "rule2_failures": totals[2] or 0,
+        "rule3_failures": totals[3] or 0,
+        "failed_any": totals[4] or 0,
+        "review_status": {
+            "manual_fix": status_rows[0] or 0,
+            "accept_ai": status_rows[1] or 0,
+            "ignore": status_rows[2] or 0,
+            "unresolved": max(total_checked - reviewed, 0),
+            "still_failing": status_rows[3] or 0,
+        },
+        "per_company": companies,
+        "run": {
+            "timestamp": totals[5],
+            "fx_rates": {},
+            "fx_degraded": bool(totals[6]) if totals[6] is not None else False,
+            "policy_version": totals[7],
+        },
+    }
+
+
 def list_failures(
     conn: duckdb.DuckDBPyConnection,
     rule: Optional[int],
@@ -73,7 +148,7 @@ def list_failures(
     """
     params.append(limit + 1)
 
-    rows = conn.execute(sql, params).fetchdf().to_dict(orient="records")
+    rows = _fetch_records(conn.execute(sql, params))
 
     next_cursor = None
     if len(rows) > limit:
@@ -110,12 +185,13 @@ def get_suggestion(conn: duckdb.DuckDBPyConnection, loan_id: str) -> dict[str, A
 
 
 def _get_enriched_loan(conn: duckdb.DuckDBPyConnection, loan_id: str) -> dict[str, Any]:
-    row = conn.execute(
+    result = conn.execute(
         "SELECT * FROM enriched_loans WHERE loan_id = ?", [loan_id]
-    ).fetchdf()
-    if row.empty:
+    )
+    rows = _fetch_records(result)
+    if not rows:
         raise NotFoundError(f"no loan for loan_id={loan_id}")
-    return row.to_dict(orient="records")[0]
+    return rows[0]
 
 
 def _asset_value(conn: duckdb.DuckDBPyConnection, company_name: str, asset_name: str) -> float:
