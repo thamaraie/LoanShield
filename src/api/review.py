@@ -1,11 +1,13 @@
 """Stage 5 business logic: paged failures, suggestions, and the review action log.
 
 Expected upstream tables (produced by stages 1-4, read-only from here):
-  enriched_loans(loan_id, company_id, company_name, loan_value, loan_value_eur,
-                 loan_currency, expected_currency, asset_value, ...)
+  enriched_loans(loan_id, company_name, hq_country, asset_description, asset_owner,
+                 loan_value, loan_value_eur, loan_currency, expected_currency, asset_value,
+                 fx_rate_used, fx_fetched_at)
   verdicts(loan_id, rule1_pass, rule2_pass, rule3_pass, fx_rate_used,
-           fx_fetched_at, policy_version)
-  suggestions(loan_id, rule, suggestion_type, detail JSON, revalidated)
+           fx_fetched_at, degraded, policy_version)
+  suggestions(loan_id, rule, action, explanation, source_page, asset_name,
+              verified, cache_hit)
 """
 from __future__ import annotations
 
@@ -42,8 +44,8 @@ def list_failures(
     params: list[Any] = []
 
     if company:
-        where.append("(el.company_id = ? OR el.company_name = ?)")
-        params.extend([company, company])
+        where.append("el.company_name = ?")
+        params.append(company)
 
     if cursor:
         where.append("v.loan_id > ?")
@@ -51,11 +53,12 @@ def list_failures(
 
     sql = f"""
         SELECT
-            v.loan_id, el.company_id, el.company_name,
+            v.loan_id, el.company_name, el.hq_country,
+            el.asset_description, el.asset_owner,
             el.loan_value, el.loan_value_eur, el.loan_currency,
             el.expected_currency, el.asset_value,
             v.rule1_pass, v.rule2_pass, v.rule3_pass,
-            v.fx_rate_used, v.fx_fetched_at, v.policy_version,
+            v.fx_rate_used, v.fx_fetched_at, v.degraded, v.policy_version,
             latest.action AS current_state
         FROM verdicts v
         JOIN enriched_loans el ON el.loan_id = v.loan_id
@@ -83,7 +86,8 @@ def list_failures(
 def get_suggestion(conn: duckdb.DuckDBPyConnection, loan_id: str) -> dict[str, Any]:
     row = conn.execute(
         """
-        SELECT loan_id, rule, suggestion_type, detail, revalidated
+        SELECT loan_id, rule, action, explanation, source_page, asset_name,
+               verified, cache_hit
         FROM suggestions
         WHERE loan_id = ?
         """,
@@ -92,16 +96,16 @@ def get_suggestion(conn: duckdb.DuckDBPyConnection, loan_id: str) -> dict[str, A
     if row is None:
         raise NotFoundError(f"no suggestion for loan_id={loan_id}")
 
-    loan_id_, rule, suggestion_type, detail, revalidated = row
-    if isinstance(detail, str):
-        detail = json.loads(detail)
+    loan_id_, rule, action, explanation, source_page, asset_name, verified, cache_hit = row
     return {
         "loan_id": loan_id_,
         "rule": rule,
-        "suggestion_type": suggestion_type,
-        "detail": detail,
-        "revalidated": revalidated,
-        "source": "cache",
+        "action": action,
+        "explanation": explanation,
+        "source_page": source_page,
+        "asset_name": asset_name,
+        "verified": verified,
+        "cache_hit": cache_hit,
     }
 
 
@@ -112,6 +116,30 @@ def _get_enriched_loan(conn: duckdb.DuckDBPyConnection, loan_id: str) -> dict[st
     if row.empty:
         raise NotFoundError(f"no loan for loan_id={loan_id}")
     return row.to_dict(orient="records")[0]
+
+
+def _asset_value(conn: duckdb.DuckDBPyConnection, company_name: str, asset_name: str) -> float:
+    """Looks up a named asset's value from the company's profile (Stage 1's `companies` table)."""
+    row = conn.execute(
+        "SELECT assets FROM companies WHERE name = ?", [company_name]
+    ).fetchone()
+    if row is None:
+        raise NotFoundError(f"no company profile for {company_name}")
+    assets = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+    for asset in assets:
+        if asset["name"] == asset_name:
+            return asset["value"]
+    raise NotFoundError(f"asset {asset_name} not found for {company_name}")
+
+
+def _edits_for_accept_ai(conn: duckdb.DuckDBPyConnection, loan: dict[str, Any], suggestion: dict[str, Any]) -> dict[str, Any]:
+    """Mirrors Stage 4's own correction so the same suggestion re-validates the same way."""
+    edits: dict[str, Any] = {}
+    if suggestion["action"] in ("change_currency", "change_currency_and_asset"):
+        edits["loan_currency"] = loan["expected_currency"]
+    if suggestion["action"] in ("change_currency_and_asset", "substitute_asset"):
+        edits["asset_value"] = _asset_value(conn, loan["company_name"], suggestion["asset_name"])
+    return edits
 
 
 def record_action(
@@ -130,10 +158,13 @@ def record_action(
 
     if action in ("manual_fix", "accept_ai"):
         loan = _get_enriched_loan(conn, loan_id)
-        edits = payload.get("edits", {})
+        if action == "manual_fix":
+            edits = payload.get("edits", {})
+        else:
+            edits = _edits_for_accept_ai(conn, loan, get_suggestion(conn, loan_id))
         candidate = {**loan, **edits}
         decision = revalidate_loan(candidate)
-        payload = {**payload, "revalidation": decision}
+        payload = {**payload, "edits": edits, "revalidation": decision}
         still_failing = not (
             decision["rule1_pass"] and decision["rule2_pass"] and decision["rule3_pass"]
         )

@@ -3,3 +3,5 @@ loans.csv
 .lock
 pyvenv.cfg
 __pycache__/
+
+.pytest_cache/
