@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import duckdb
 
-DB_PATH = "data/loanshield.duckdb"
+DB_PATH = "data/loanguard.duckdb"
 
 _CREATE_REVIEW_ACTIONS = """
 CREATE TABLE IF NOT EXISTS review_actions (
