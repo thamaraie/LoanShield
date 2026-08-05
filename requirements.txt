@@ -1,3 +1,8 @@
+fastapi
+uvicorn
+duckdb
+httpx
+pandas
 duckdb==1.5.5
 httpx==0.28.1
 truststore==0.10.4
