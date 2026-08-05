@@ -9,8 +9,10 @@ from pydantic import BaseModel
 
 class FailureRow(BaseModel):
     loan_id: str
-    company_id: str
     company_name: str
+    hq_country: str
+    asset_description: str
+    asset_owner: str
     loan_value: float
     loan_value_eur: float
     loan_currency: str
@@ -19,8 +21,9 @@ class FailureRow(BaseModel):
     rule1_pass: bool
     rule2_pass: bool
     rule3_pass: bool
-    fx_rate_used: float
-    fx_fetched_at: datetime
+    fx_rate_used: Optional[float] = None
+    fx_fetched_at: Optional[str] = None
+    degraded: bool
     policy_version: str
     current_state: Optional[str] = None
 
@@ -33,10 +36,12 @@ class FailuresPage(BaseModel):
 class SuggestionResponse(BaseModel):
     loan_id: str
     rule: Literal[1, 2, 3]
-    suggestion_type: str
-    detail: dict[str, Any]
-    revalidated: bool
-    source: Literal["cache", "generated"]
+    action: str
+    explanation: str
+    source_page: Optional[int] = None
+    asset_name: Optional[str] = None
+    verified: bool
+    cache_hit: bool
 
 
 class ActionRequest(BaseModel):
