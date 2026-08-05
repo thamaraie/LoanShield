@@ -5,3 +5,6 @@ python-dotenv==1.2.2
 chromadb==1.5.9
 sentence-transformers==5.6.1
 pytest==9.1.1
+httpx
+pypdf
+duckdb
