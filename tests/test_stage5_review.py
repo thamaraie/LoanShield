@@ -106,6 +106,24 @@ def test_list_failures_pagination_cursor(conn):
     assert next_cursor2 is None
 
 
+def test_report_contains_rule_counts_company_totals_and_unresolved(conn):
+    report = review.get_report(conn)
+
+    assert report["total_checked"] == 2
+    assert report["rule1_failures"] == 1
+    assert report["rule2_failures"] == 1
+    assert report["rule3_failures"] == 0
+    assert report["failed_any"] == 2
+    assert report["review_status"] == {
+        "manual_fix": 0,
+        "accept_ai": 0,
+        "ignore": 0,
+        "unresolved": 2,
+        "still_failing": 0,
+    }
+    assert report["per_company"] == [{"company_name": "Acme", "loan_value_eur": 37000.0}]
+
+
 def test_get_suggestion_found_and_missing(conn):
     suggestion = review.get_suggestion(conn, "L1")
     assert suggestion["action"] == "change_currency"

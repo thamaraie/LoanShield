@@ -11,11 +11,12 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.db import get_connection
-from src.api.review import NotFoundError, get_suggestion, list_failures, record_action
+from src.api.review import NotFoundError, get_report, get_suggestion, list_failures, record_action
 from src.api.schemas import (
     ActionRequest,
     ActionResponse,
     FailuresPage,
+    ReportResponse,
     SuggestionResponse,
 )
 
@@ -53,6 +54,11 @@ def get_failures(
 ):
     rows, next_cursor = list_failures(conn, rule, company, cursor, limit)
     return {"items": rows, "next_cursor": next_cursor}
+
+
+@app.get("/report", response_model=ReportResponse)
+def get_review_report(conn=Depends(db_conn)):
+    return get_report(conn)
 
 
 @app.get("/loans/{loan_id}/suggestion", response_model=SuggestionResponse)

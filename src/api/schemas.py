@@ -33,6 +33,37 @@ class FailuresPage(BaseModel):
     next_cursor: Optional[str] = None
 
 
+class ReviewStatus(BaseModel):
+    manual_fix: int
+    accept_ai: int
+    ignore: int
+    unresolved: int
+    still_failing: int
+
+
+class CompanyTotal(BaseModel):
+    company_name: str
+    loan_value_eur: float
+
+
+class RunMetadata(BaseModel):
+    timestamp: Optional[str] = None
+    fx_rates: dict[str, float] = {}
+    fx_degraded: bool
+    policy_version: Optional[str] = None
+
+
+class ReportResponse(BaseModel):
+    total_checked: int
+    rule1_failures: int
+    rule2_failures: int
+    rule3_failures: int
+    failed_any: int
+    review_status: ReviewStatus
+    per_company: list[CompanyTotal]
+    run: RunMetadata
+
+
 class SuggestionResponse(BaseModel):
     loan_id: str
     rule: Literal[1, 2, 3]
